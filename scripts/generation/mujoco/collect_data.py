@@ -58,79 +58,80 @@ def rollout(policy, env_name, max_path, num_data, random=False):
     t = 0 
     done = False
     s = env.reset()
-    while len(data['rewards']) < num_data:
+    with torch.no_grad():
+        while len(data['rewards']) < num_data:
 
 
-        if random:
-            a = env.action_space.sample()
-            logprob = np.log(1.0 / np.prod(env.action_space.high - env.action_space.low))
-        else:
-            torch_s = ptu.from_numpy(np.expand_dims(s, axis=0))
-            distr = policy.forward(torch_s)
-            a = distr.sample()
-            logprob = distr.log_prob(a)
-            a = ptu.get_numpy(a).squeeze()
+            if random:
+                a = env.action_space.sample()
+                logprob = np.log(1.0 / np.prod(env.action_space.high - env.action_space.low))
+            else:
+                torch_s = ptu.from_numpy(np.expand_dims(s, axis=0))
+                distr = policy.forward(torch_s)
+                a = distr.sample()
+                logprob = distr.log_prob(a)
+                a = ptu.get_numpy(a).squeeze()
 
-        #mujoco only
-        qpos, qvel = env.sim.data.qpos.ravel().copy(), env.sim.data.qvel.ravel().copy()
+            #mujoco only
+            qpos, qvel = env.sim.data.qpos.ravel().copy(), env.sim.data.qvel.ravel().copy()
 
-        try:
-            ns, rew, done, infos = env.step(a)
-        except:
-            print('lost connection')
-            env.close()
-            env = gym.make(env_name)
-            s = env.reset()
-            traj_data = get_reset_data()
-            t = 0
-            _returns = 0
-            continue
+            try:
+                ns, rew, done, infos = env.step(a)
+            except:
+                print('lost connection')
+                env.close()
+                env = gym.make(env_name)
+                s = env.reset()
+                traj_data = get_reset_data()
+                t = 0
+                _returns = 0
+                continue
 
-        _returns += rew
+            _returns += rew
 
-        t += 1
-        timeout = False
-        terminal = False
-        if t == max_path:
-            timeout = True
-        elif done:
-            terminal = True
+            t += 1
+            timeout = False
+            terminal = False
+            if t == max_path:
+                timeout = True
+            elif done:
+                terminal = True
 
 
-        traj_data['observations'].append(s)
-        traj_data['actions'].append(a)
-        traj_data['next_observations'].append(ns)
-        traj_data['rewards'].append(rew)
-        traj_data['terminals'].append(terminal)
-        traj_data['timeouts'].append(timeout)
-        traj_data['logprobs'].append(logprob)
-        traj_data['qpos'].append(qpos)
-        traj_data['qvel'].append(qvel)
+            traj_data['observations'].append(s)
+            traj_data['actions'].append(a)
+            traj_data['next_observations'].append(ns)
+            traj_data['rewards'].append(rew)
+            traj_data['terminals'].append(terminal)
+            traj_data['timeouts'].append(timeout)
+            traj_data['logprobs'].append(logprob)
+            traj_data['qpos'].append(qpos)
+            traj_data['qvel'].append(qvel)
 
-        s = ns
-        if terminal or timeout:
-            print('Finished trajectory. Len=%d, Returns=%f. Progress:%d/%d' % (t, _returns, len(data['rewards']), num_data))
-            s = env.reset()
-            t = 0
-            _returns = 0
-            for k in data:
-                data[k].extend(traj_data[k])
-            traj_data = get_reset_data()
-    
-    new_data = dict(
-        observations=np.array(data['observations']).astype(np.float32),
-        actions=np.array(data['actions']).astype(np.float32),
-        next_observations=np.array(data['next_observations']).astype(np.float32),
-        rewards=np.array(data['rewards']).astype(np.float32),
-        terminals=np.array(data['terminals']).astype(np.bool),
-        timeouts=np.array(data['timeouts']).astype(np.bool)
-    )
-    new_data['infos/action_log_probs'] = np.array(data['logprobs']).astype(np.float32)
-    new_data['infos/qpos'] = np.array(data['qpos']).astype(np.float32)
-    new_data['infos/qvel'] = np.array(data['qvel']).astype(np.float32)
+            s = ns
+            if terminal or timeout:
+                print('Finished trajectory. Len=%d, Returns=%f. Progress:%d/%d' % (t, _returns, len(data['rewards']), num_data))
+                s = env.reset()
+                t = 0
+                _returns = 0
+                for k in data:
+                    data[k].extend(traj_data[k])
+                traj_data = get_reset_data()
+        
+        new_data = dict(
+            observations=np.array(data['observations']).astype(np.float32),
+            actions=np.array(data['actions']).astype(np.float32),
+            next_observations=np.array(data['next_observations']).astype(np.float32),
+            rewards=np.array(data['rewards']).astype(np.float32),
+            terminals=np.array(data['terminals']).astype(np.bool),
+            timeouts=np.array(data['timeouts']).astype(np.bool)
+        )
+        new_data['infos/action_log_probs'] = np.array(data['logprobs']).astype(np.float32)
+        new_data['infos/qpos'] = np.array(data['qpos']).astype(np.float32)
+        new_data['infos/qvel'] = np.array(data['qvel']).astype(np.float32)
 
-    for k in new_data:
-        new_data[k] = new_data[k][:num_data]
+        for k in new_data:
+            new_data[k] = new_data[k][:num_data]
     return new_data
 
 
@@ -148,9 +149,13 @@ if __name__ == "__main__":
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
+    # if torch.cuda.is_available():
+    #     ptu.set_gpu_mode(True)
+
     policy = None
     if not args.random:
-        policy = load(args.pklfile)
+        policy = load(args.pklfile).to('cpu')
+        policy.eval()
     data = rollout(policy, args.env, max_path=args.max_path, num_data=args.num_data, random=args.random)
 
     hfile = h5py.File(args.output_file, 'w')
