@@ -50,7 +50,7 @@ def get_reset_data():
     )
     return data
 
-def rollout(policy, env_name, max_path, num_data, period: int, random_step: int = 100, render = False):
+def rollout(policy, env_name, max_path, num_data, period: int, random_step: int = 25, render = False):
     env = gym.make(env_name)
 
     data = get_reset_data()
@@ -68,21 +68,25 @@ def rollout(policy, env_name, max_path, num_data, period: int, random_step: int 
             if render:
                 env.render()
 
-            # if cnt >= period - random_step:
-            #     a = env.action_space.sample()
-            #     logprob = np.log(1.0 / np.prod(env.action_space.high - env.action_space.low))
-            # else:
-            torch_s = ptu.from_numpy(np.expand_dims(s, axis=0))
-            distr = policy.forward(torch_s)
-            a = distr.sample()
-            logprob = distr.log_prob(a)
+            if cnt >= period - random_step:
+                a = torch.zeros(env.action_space.shape)
+                logprob = np.log(1.0 / np.prod(env.action_space.high - env.action_space.low))
+                torch_s = ptu.from_numpy(np.expand_dims(s, axis=0))
+                # distr = policy.forward(torch_s)
+                # a = - distr.sample()
+                # logprob = distr.log_prob(a)
+            else:
+                torch_s = ptu.from_numpy(np.expand_dims(s, axis=0))
+                distr = policy.forward(torch_s)
+                a = distr.sample()
+                logprob = distr.log_prob(a)
             a = ptu.get_numpy(a).squeeze()
 
             # if cnt >= period - random_step:
-            weight = np.random.uniform(0,0)
-            noise = np.random.randn(a.size) * weight
-            a += noise
-                # a = a * 0.5
+            # weight = np.random.uniform(0,0.5)
+            # noise = np.random.randn(a.size) * weight
+            # a += noise
+            #     # a = a * 0.5
 
             #mujoco only
             qpos, qvel = env.sim.data.qpos.ravel().copy(), env.sim.data.qvel.ravel().copy()
@@ -185,13 +189,13 @@ if __name__ == "__main__":
     for k in data:
         hfile.create_dataset(k, data=data[k], compression='gzip')
 
-    if args.random:
-        pass
-    else:
-        hfile['metadata/algorithm'] = np.string_('SAC')
-        hfile['metadata/iteration'] = np.array([get_pkl_itr(args.pklfile)], dtype=np.int32)[0]
-        hfile['metadata/policy/nonlinearity'] = np.string_('relu')
-        hfile['metadata/policy/output_distribution'] = np.string_('tanh_gaussian')
-        for k, v in get_policy_wts(policy).items():
-            hfile['metadata/policy/'+k] = v
+    # if args.random:
+    #     pass
+    # else:
+    hfile['metadata/algorithm'] = np.string_('SAC')
+    hfile['metadata/iteration'] = np.array([get_pkl_itr(args.pklfile)], dtype=np.int32)[0]
+    hfile['metadata/policy/nonlinearity'] = np.string_('relu')
+    hfile['metadata/policy/output_distribution'] = np.string_('tanh_gaussian')
+    for k, v in get_policy_wts(policy).items():
+        hfile['metadata/policy/'+k] = v
     hfile.close()
